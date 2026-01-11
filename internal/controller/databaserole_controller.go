@@ -39,8 +39,9 @@ import (
 // DatabaseRoleReconciler reconciles a DatabaseRole object
 type DatabaseRoleReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme              *runtime.Scheme
+	Recorder            record.EventRecorder
+	PgConnectionFactory PgConnectionFactory
 }
 
 // +kubebuilder:rbac:groups=postgres.databases.dinhloc.dev,resources=databaseroles,verbs=get;list;watch;create;update;patch;delete
@@ -120,7 +121,7 @@ func (r *DatabaseRoleReconciler) ensureDatabaseRole(ctx context.Context, req ctr
 		databaseCluster postgresv1alpha1.DatabaseCluster
 		databaseRole    postgresv1alpha1.DatabaseRole
 
-		degradedCondition metav1.Condition = metav1.Condition{
+		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
 			Status:  metav1.ConditionUnknown,
 			Reason:  "Unknown",
@@ -162,7 +163,12 @@ func (r *DatabaseRoleReconciler) ensureDatabaseRole(ctx context.Context, req ctr
 		return ctrl.Result{}, err
 	}
 
-	conn, err := NewPgConnection(dsn)
+	var conn PostgreSQLConnection
+	if r.PgConnectionFactory != nil {
+		conn, err = r.PgConnectionFactory(dsn)
+	} else {
+		conn, err = NewPgConnection(dsn)
+	}
 	if err != nil {
 		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
@@ -173,7 +179,7 @@ func (r *DatabaseRoleReconciler) ensureDatabaseRole(ctx context.Context, req ctr
 
 		return ctrl.Result{}, err
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	// 4. Check if the role exists
 	exists, err := conn.IsRoleExist(ctx, databaseRole.Spec.RoleName)
@@ -241,7 +247,7 @@ func (r *DatabaseRoleReconciler) ensurePermissionsConfigured(ctx context.Context
 		databaseCluster postgresv1alpha1.DatabaseCluster
 		databaseRole    postgresv1alpha1.DatabaseRole
 
-		degradedCondition metav1.Condition = metav1.Condition{
+		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
 			Status:  metav1.ConditionUnknown,
 			Reason:  "Unknown",
@@ -286,7 +292,12 @@ func (r *DatabaseRoleReconciler) ensurePermissionsConfigured(ctx context.Context
 			return ctrl.Result{}, err
 		}
 
-		conn, err := NewPgConnection(dsn)
+		var conn PostgreSQLConnection
+		if r.PgConnectionFactory != nil {
+			conn, err = r.PgConnectionFactory(dsn)
+		} else {
+			conn, err = NewPgConnection(dsn)
+		}
 		if err != nil {
 			degradedCondition = metav1.Condition{
 				Type:    conditionDegraded,
@@ -298,7 +309,7 @@ func (r *DatabaseRoleReconciler) ensurePermissionsConfigured(ctx context.Context
 			logger.Error(err, "Failed to get connection to cluster")
 			return ctrl.Result{}, err
 		}
-		defer conn.Close(ctx)
+		defer func() { _ = conn.Close(ctx) }()
 
 		if exist, err := conn.IsDatabaseExist(ctx, permission.Database); err != nil {
 			degradedCondition = metav1.Condition{

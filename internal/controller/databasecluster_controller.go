@@ -39,10 +39,6 @@ import (
 )
 
 const (
-	maintainanceDatabase = "postgres"
-)
-
-const (
 	conditionAvailable = "Available"
 	conditionDegraded  = "Degraded"
 	conditionReady     = "Ready"
@@ -51,8 +47,9 @@ const (
 // DatabaseClusterReconciler reconciles a DatabaseCluster object
 type DatabaseClusterReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme              *runtime.Scheme
+	Recorder            record.EventRecorder
+	PgConnectionFactory PgConnectionFactory
 }
 
 // +kubebuilder:rbac:groups=postgres.databases.dinhloc.dev,resources=databaseclusters,verbs=get;list;watch;create;update;patch;delete
@@ -144,7 +141,12 @@ func (r *DatabaseClusterReconciler) ensureDatabaseClusterConnected(ctx context.C
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	conn, err := NewPgConnection(dsn)
+	var conn PostgreSQLConnection
+	if r.PgConnectionFactory != nil {
+		conn, err = r.PgConnectionFactory(dsn)
+	} else {
+		conn, err = NewPgConnection(dsn)
+	}
 	if err != nil {
 		meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
 			Type:    conditionAvailable,
@@ -162,7 +164,7 @@ func (r *DatabaseClusterReconciler) ensureDatabaseClusterConnected(ctx context.C
 
 		return ctrl.Result{}, err
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	// 3. Update the DatabaseCluster status
 	changed := meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
@@ -222,9 +224,9 @@ func (r *DatabaseClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func getDatabaseClusterConnectionDSN(ctx context.Context, client client.Client, cluster *postgresv1alpha1.DatabaseCluster) (string, error) {
+func getDatabaseClusterConnectionDSN(ctx context.Context, k8sClient client.Client, cluster *postgresv1alpha1.DatabaseCluster) (string, error) {
 	connectionSecret := &corev1.Secret{}
-	if err := client.Get(ctx, types.NamespacedName{Name: cluster.Spec.Connection.Name, Namespace: cluster.Spec.Connection.Namespace}, connectionSecret); err != nil {
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: cluster.Spec.Connection.Name, Namespace: cluster.Spec.Connection.Namespace}, connectionSecret); err != nil {
 		return "", err
 	}
 	return string(connectionSecret.Data["connection"]), nil

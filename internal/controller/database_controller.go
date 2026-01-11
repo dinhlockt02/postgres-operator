@@ -42,15 +42,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const (
-	finalizer = "postgres.databases.dinhloc.dev/finalizer"
-)
-
 // DatabaseReconciler reconciles a Database object
 type DatabaseReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme              *runtime.Scheme
+	Recorder            record.EventRecorder
+	PgConnectionFactory PgConnectionFactory
 }
 
 // +kubebuilder:rbac:groups=postgres.databases.dinhloc.dev,resources=databases,verbs=get;list;watch;create;update;patch;delete
@@ -133,7 +130,7 @@ func (r *DatabaseReconciler) ensureDatabaseExists(ctx context.Context, req ctrl.
 		database        postgresv1alpha1.Database
 		databaseCluster postgresv1alpha1.DatabaseCluster
 
-		degradedCondition metav1.Condition = metav1.Condition{
+		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
 			Status:  metav1.ConditionUnknown,
 			Reason:  "Unknown",
@@ -173,7 +170,12 @@ func (r *DatabaseReconciler) ensureDatabaseExists(ctx context.Context, req ctrl.
 		return ctrl.Result{}, err
 	}
 
-	conn, err := NewPgConnection(dsn)
+	var conn PostgreSQLConnection
+	if r.PgConnectionFactory != nil {
+		conn, err = r.PgConnectionFactory(dsn)
+	} else {
+		conn, err = NewPgConnection(dsn)
+	}
 	if err != nil {
 		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
@@ -185,7 +187,7 @@ func (r *DatabaseReconciler) ensureDatabaseExists(ctx context.Context, req ctrl.
 		logger.Error(err, "Failed to get connection to cluster")
 		return ctrl.Result{}, err
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	// 2. Check if the database exists
 	exists, err := conn.IsDatabaseExist(ctx, database.Spec.Name)
@@ -241,7 +243,7 @@ func (r *DatabaseReconciler) ensureDatabaseServiceExists(ctx context.Context, re
 		databaseService corev1.Service
 		databaseCluster postgresv1alpha1.DatabaseCluster
 
-		availableCondition metav1.Condition = metav1.Condition{
+		availableCondition = metav1.Condition{
 			Type:    conditionAvailable,
 			Status:  metav1.ConditionUnknown,
 			Reason:  "Unknown",
@@ -413,7 +415,7 @@ func (r *DatabaseReconciler) ensureDatabaseSchemaExists(ctx context.Context, req
 		database        postgresv1alpha1.Database
 		databaseCluster postgresv1alpha1.DatabaseCluster
 
-		degradedCondition metav1.Condition = metav1.Condition{
+		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
 			Status:  metav1.ConditionUnknown,
 			Reason:  "Unknown",
@@ -454,7 +456,12 @@ func (r *DatabaseReconciler) ensureDatabaseSchemaExists(ctx context.Context, req
 		return ctrl.Result{}, err
 	}
 
-	conn, err := NewPgConnection(dsn)
+	var conn PostgreSQLConnection
+	if r.PgConnectionFactory != nil {
+		conn, err = r.PgConnectionFactory(dsn)
+	} else {
+		conn, err = NewPgConnection(dsn)
+	}
 	if err != nil {
 		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
@@ -463,9 +470,10 @@ func (r *DatabaseReconciler) ensureDatabaseSchemaExists(ctx context.Context, req
 			Message: fmt.Sprintf("Failed to get connection to cluster %v", err),
 		}
 
+		logger.Error(err, "Failed to get connection to cluster")
 		return ctrl.Result{}, err
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	if err := conn.SelectDatabase(ctx, database.Spec.Name); err != nil {
 		degradedCondition = metav1.Condition{

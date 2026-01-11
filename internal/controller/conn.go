@@ -10,12 +10,29 @@ import (
 	"github.com/lib/pq"
 )
 
+type PostgreSQLConnection interface {
+	Ping(ctx context.Context) error
+	Close(ctx context.Context) error
+	SelectDatabase(ctx context.Context, database string) error
+	CreateRole(ctx context.Context, rolename string, password string) error
+	IsRoleExist(ctx context.Context, rolename string) (bool, error)
+	IsDatabaseExist(ctx context.Context, database string) (bool, error)
+	CreateDatabase(ctx context.Context, database string) error
+	IsSchemaExist(ctx context.Context, schema string) (bool, error)
+	CreateSchema(ctx context.Context, schema string) error
+	GrantConnectPermission(ctx context.Context, database string, rolename string) error
+	GrantSchemaPrivileges(ctx context.Context, schema string, rolename string, privileges []postgresv1alpha1.SchemaPrivilege) error
+	GrantTablePrivileges(ctx context.Context, table string, schema string, rolename string, privileges []postgresv1alpha1.TablePrivilege) error
+}
+
+type PgConnectionFactory func(dsn string) (PostgreSQLConnection, error)
+
 type PgConnection struct {
 	connConfig *pgx.ConnConfig
 	conn       *pgx.Conn
 }
 
-func NewPgConnection(dsn string) (*PgConnection, error) {
+func NewPgConnection(dsn string) (PostgreSQLConnection, error) {
 	connConfig, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
@@ -46,8 +63,8 @@ func (c *PgConnection) SelectDatabase(ctx context.Context, database string) erro
 	if err != nil {
 		return err
 	}
-	// close current connection
-	c.conn.Close(ctx)
+	// close current connection, ignore error since we're replacing it
+	_ = c.conn.Close(ctx)
 
 	c.conn = newConn
 	return nil
