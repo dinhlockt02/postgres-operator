@@ -1,0 +1,48 @@
+apiVersion: postgres.databases.dinhloc.dev/v1alpha1
+kind: DatabaseRole
+metadata:
+  labels:
+    app.kubernetes.io/name: postgres-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: databaserole-sample
+spec:
+  roleName: databaserole-sample
+  password:
+    key: password
+    name: postgres-secret
+  databaseClusterRef:
+    name: databasecluster-sample
+  permissions:
+    - database: database_sample
+      schemas:
+        - name: s_database_sample
+          privileges:
+            - CREATE
+            - USAGE
+          tables:
+            - name: "*"
+              privileges:
+                - ALL
+---
+apiVersion: postgres.databases.dinhloc.dev/v1alpha1
+kind: DatabaseRole
+metadata:
+  labels:
+    app.kubernetes.io/name: postgres-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: databaserole-sample-2
+spec:
+  roleName: databaserole-sample-2
+  password:
+    key: password
+    name: postgres-secret
+  databaseClusterRef:
+    name: databasecluster-sample
+  permissions:
+    - database: database_sample
+      schemas:
+        - name: s_database_sample
+          tables:
+            - name: "*"
+              privileges:
+                - ALL

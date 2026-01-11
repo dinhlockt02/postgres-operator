@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: default
+type: Opaque
+stringData:
+  connection: postgres://postgres:postgres@192.168.1.103:5432?sslmode=disable&connect_timeout=10
+  password: postgres123
+---
+apiVersion: postgres.databases.dinhloc.dev/v1alpha1
+kind: DatabaseCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: postgres-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: databasecluster-sample
+spec:
+  connection:
+    name: postgres-secret
+    namespace: default

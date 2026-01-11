@@ -1,0 +1,15 @@
+apiVersion: postgres.databases.dinhloc.dev/v1alpha1
+kind: Database
+metadata:
+  labels:
+    app.kubernetes.io/name: postgres-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: database-sample
+  namespace: default
+spec:
+  databaseClusterRef:
+    name: databasecluster-sample
+  encoding: UTF8
+  name: database_sample
+  schema: s_database_sample
+  timezone: UTC
