@@ -1,8 +1,12 @@
 # postgres-operator
-// TODO(user): Add simple overview of use/purpose
+
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+The Postgres Operator manages PostgreSQL resources (Databases, Roles, Permissions) within a Kubernetes cluster by connecting to an external (or in-cluster) PostgreSQL server. It bridges the gap between Kubernetes manifests and SQL commands, allowing you to manage your database schema and users using GitOps practices.
+
+For detailed documentation, please refer to:
+- [Architecture Guide](docs/architecture.md) - Learn about the CRDs and operator workflow.
+- [Usage Guide](docs/usage.md) - Step-by-step instructions on how to use the operator.
 
 ## Getting Started
 
@@ -11,6 +15,7 @@
 - docker version 17.03+.
 - kubectl version v1.11.3+.
 - Access to a Kubernetes v1.11.3+ cluster.
+- A running PostgreSQL server.
 
 ### To Deploy on the cluster
 **Build and push your image to the location specified by `IMG`:**
@@ -111,7 +116,7 @@ previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml
 is manually re-applied afterwards.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+Contributions are welcome! Please check the issues tracker for open tasks.
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
 
