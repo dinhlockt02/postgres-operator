@@ -331,6 +331,18 @@ func (r *DatabaseRoleReconciler) ensurePermissionsConfigured(ctx context.Context
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
+		// 3.0. Select database
+		if err := conn.SelectDatabase(ctx, permission.Database); err != nil {
+			degradedCondition = metav1.Condition{
+				Type:    conditionDegraded,
+				Status:  metav1.ConditionTrue,
+				Reason:  "SelectDatabaseFailed",
+				Message: fmt.Sprintf("Failed to select database %v", err),
+			}
+
+			logger.Error(err, "Failed to select database")
+			return ctrl.Result{}, err
+		}
 		// 3.1.1. Grant connect permission
 		if err := conn.GrantConnectPermission(ctx, permission.Database, databaseRole.Spec.RoleName); err != nil {
 			degradedCondition = metav1.Condition{

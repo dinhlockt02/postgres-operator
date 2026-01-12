@@ -149,12 +149,18 @@ func (r *DatabaseReconciler) ensureDatabaseExists(ctx context.Context, req ctrl.
 
 	// 1. Get CRDs: Database and DatabaseCluster
 	if err := r.Get(ctx, req.NamespacedName, &database); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
 	if err := r.Get(ctx, types.NamespacedName{
 		Name: database.Spec.DatabaseClusterRef.Name,
 	}, &databaseCluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
