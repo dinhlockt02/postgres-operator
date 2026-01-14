@@ -50,6 +50,9 @@ type DatabaseReconciler struct {
 	PgConnectionFactory PgConnectionFactory
 }
 
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=postgres.databases.dinhloc.dev,resources=databases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgres.databases.dinhloc.dev,resources=databases/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=postgres.databases.dinhloc.dev,resources=databases/finalizers,verbs=update

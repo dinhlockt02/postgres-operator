@@ -44,6 +44,7 @@ type DatabaseRoleReconciler struct {
 	PgConnectionFactory PgConnectionFactory
 }
 
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=postgres.databases.dinhloc.dev,resources=databaseroles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgres.databases.dinhloc.dev,resources=databaseroles/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=postgres.databases.dinhloc.dev,resources=databaseroles/finalizers,verbs=update
