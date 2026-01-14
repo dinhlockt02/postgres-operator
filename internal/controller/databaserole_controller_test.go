@@ -173,6 +173,7 @@ var _ = Describe("DatabaseRole Controller", func() {
 			mockConn.On("IsRoleExist", mock.Anything, "test_role").Return(false, nil)
 			mockConn.On("CreateRole", mock.Anything, "test_role", "insecure-password").Return(nil)
 			mockConn.On("IsDatabaseExist", mock.Anything, "test_db").Return(true, nil)
+			mockConn.On("SelectDatabase", mock.Anything, "test_db").Return(nil)
 			mockConn.On("GrantConnectPermission", mock.Anything, "test_db", "test_role").Return(nil)
 			mockConn.On("IsSchemaExist", mock.Anything, "public").Return(true, nil)
 			mockConn.On("GrantSchemaPrivileges", mock.Anything, "public", "test_role", []postgresv1alpha1.SchemaPrivilege{"USAGE"}).Return(nil)
@@ -202,6 +203,7 @@ var _ = Describe("DatabaseRole Controller", func() {
 			mockConn.On("IsRoleExist", mock.Anything, "test_role").Return(true, nil)
 			// CreateRole should NOT be called
 			mockConn.On("IsDatabaseExist", mock.Anything, "test_db").Return(true, nil)
+			mockConn.On("SelectDatabase", mock.Anything, "test_db").Return(nil)
 			mockConn.On("GrantConnectPermission", mock.Anything, "test_db", "test_role").Return(nil)
 			mockConn.On("IsSchemaExist", mock.Anything, "public").Return(true, nil)
 			mockConn.On("GrantSchemaPrivileges", mock.Anything, "public", "test_role", []postgresv1alpha1.SchemaPrivilege{"USAGE"}).Return(nil)
@@ -306,6 +308,7 @@ var _ = Describe("DatabaseRole Controller", func() {
 			mockConn.On("Close", mock.Anything).Return(nil)
 			mockConn.On("IsRoleExist", mock.Anything, "test_role").Return(true, nil)
 			mockConn.On("IsDatabaseExist", mock.Anything, "test_db").Return(true, nil)
+			mockConn.On("SelectDatabase", mock.Anything, "test_db").Return(nil)
 			mockConn.On("GrantConnectPermission", mock.Anything, "test_db", "test_role").Return(nil)
 			mockConn.On("IsSchemaExist", mock.Anything, "public").Return(false, nil)
 
@@ -334,6 +337,7 @@ var _ = Describe("DatabaseRole Controller", func() {
 			mockConn.On("Close", mock.Anything).Return(nil)
 			mockConn.On("IsRoleExist", mock.Anything, "test_role").Return(true, nil)
 			mockConn.On("IsDatabaseExist", mock.Anything, "test_db").Return(true, nil)
+			mockConn.On("SelectDatabase", mock.Anything, "test_db").Return(nil)
 			mockConn.On("GrantConnectPermission", mock.Anything, "test_db", "test_role").Return(errors.New("grant connect failed"))
 
 			controllerReconciler := &DatabaseRoleReconciler{
@@ -361,6 +365,7 @@ var _ = Describe("DatabaseRole Controller", func() {
 			mockConn.On("Close", mock.Anything).Return(nil)
 			mockConn.On("IsRoleExist", mock.Anything, "test_role").Return(true, nil)
 			mockConn.On("IsDatabaseExist", mock.Anything, "test_db").Return(true, nil)
+			mockConn.On("SelectDatabase", mock.Anything, "test_db").Return(nil)
 			mockConn.On("GrantConnectPermission", mock.Anything, "test_db", "test_role").Return(nil)
 			mockConn.On("IsSchemaExist", mock.Anything, "public").Return(true, nil)
 			mockConn.On("GrantSchemaPrivileges", mock.Anything, "public", "test_role", []postgresv1alpha1.SchemaPrivilege{"USAGE"}).Return(errors.New("grant schema privileges failed"))
@@ -659,6 +664,7 @@ var _ = Describe("DatabaseRole Controller", func() {
 			mockConn.On("Close", mock.Anything).Return(nil)
 			mockConn.On("IsRoleExist", mock.Anything, "table_role").Return(true, nil)
 			mockConn.On("IsDatabaseExist", mock.Anything, "test_db").Return(true, nil)
+			mockConn.On("SelectDatabase", mock.Anything, "test_db").Return(nil)
 			mockConn.On("GrantConnectPermission", mock.Anything, "test_db", "table_role").Return(nil)
 			mockConn.On("IsSchemaExist", mock.Anything, "public").Return(true, nil)
 			mockConn.On("GrantSchemaPrivileges", mock.Anything, "public", "table_role", []postgresv1alpha1.SchemaPrivilege{"USAGE"}).Return(nil)
@@ -688,6 +694,7 @@ var _ = Describe("DatabaseRole Controller", func() {
 			mockConn.On("Close", mock.Anything).Return(nil)
 			mockConn.On("IsRoleExist", mock.Anything, "table_role").Return(true, nil)
 			mockConn.On("IsDatabaseExist", mock.Anything, "test_db").Return(true, nil)
+			mockConn.On("SelectDatabase", mock.Anything, "test_db").Return(nil)
 			mockConn.On("GrantConnectPermission", mock.Anything, "test_db", "table_role").Return(nil)
 			mockConn.On("IsSchemaExist", mock.Anything, "public").Return(true, nil)
 			mockConn.On("GrantSchemaPrivileges", mock.Anything, "public", "table_role", []postgresv1alpha1.SchemaPrivilege{"USAGE"}).Return(nil)

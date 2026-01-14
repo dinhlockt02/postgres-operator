@@ -334,7 +334,7 @@ var _ = Describe("Database Controller", func() {
 			mockConn.AssertExpectations(GinkgoT())
 		})
 
-		It("should handle resource not found", func() {
+		It("should handle resource not found gracefully", func() {
 			By("Reconciling a non-existent resource")
 
 			mockConn := new(MockPgConnection)
@@ -354,7 +354,8 @@ var _ = Describe("Database Controller", func() {
 					Namespace: "default",
 				},
 			})
-			Expect(err).To(HaveOccurred())
+			// NotFound should return nil error (resource was deleted)
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 
@@ -397,7 +398,7 @@ var _ = Describe("Database Controller", func() {
 			}
 		})
 
-		It("should fail when DatabaseCluster is not found", func() {
+		It("should requeue when DatabaseCluster is not found", func() {
 			By("Reconciling with missing DatabaseCluster")
 
 			mockConn := new(MockPgConnection)
@@ -411,10 +412,12 @@ var _ = Describe("Database Controller", func() {
 				},
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
-			Expect(err).To(HaveOccurred())
+			// Should return nil error but requeue for dependency not ready
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 		})
 	})
 })

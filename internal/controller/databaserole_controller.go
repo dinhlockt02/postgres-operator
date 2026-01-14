@@ -22,6 +22,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -59,7 +60,10 @@ type DatabaseRoleReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *DatabaseRoleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := logf.FromContext(ctx)
+	logger := logf.FromContext(ctx).WithValues("controller", "databaserole", "resource", req.NamespacedName)
+	ctx = logf.IntoContext(ctx, logger)
+
+	logger.V(1).Info("Reconcile started")
 
 	stages := []func(ctx context.Context, req ctrl.Request) (ctrl.Result, error){
 		r.ensureDatabaseRole,
@@ -67,7 +71,11 @@ func (r *DatabaseRoleReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	for _, stage := range stages {
-		if result, err := stage(ctx, req); err != nil {
+		result, err := stage(ctx, req)
+		if err != nil || !result.IsZero() {
+			if err != nil {
+				logger.Error(err, "Reconcile failed")
+			}
 			return result, err
 		}
 	}
@@ -76,42 +84,45 @@ func (r *DatabaseRoleReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		Type:    conditionReady,
 		Status:  metav1.ConditionTrue,
 		Reason:  "Ready",
-		Message: "Database is ready",
+		Message: "DatabaseRole is ready",
 	}
 
 	availableCondition := metav1.Condition{
 		Type:    conditionAvailable,
 		Status:  metav1.ConditionTrue,
 		Reason:  "Available",
-		Message: "Database is available",
+		Message: "DatabaseRole is available",
 	}
 
 	degradedCondition := metav1.Condition{
 		Type:    conditionDegraded,
 		Status:  metav1.ConditionFalse,
 		Reason:  "NotDegraded",
-		Message: "Database is not degraded",
+		Message: "DatabaseRole is not degraded",
 	}
 
-	var database postgresv1alpha1.DatabaseRole
-	if err := r.Get(ctx, req.NamespacedName, &database); err != nil {
+	var databaseRole postgresv1alpha1.DatabaseRole
+	if err := r.Get(ctx, req.NamespacedName, &databaseRole); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
 	changed := false
 
-	changed = changed || meta.SetStatusCondition(&database.Status.Conditions, readyCondition)
-	changed = changed || meta.SetStatusCondition(&database.Status.Conditions, availableCondition)
-	changed = changed || meta.SetStatusCondition(&database.Status.Conditions, degradedCondition)
+	changed = changed || meta.SetStatusCondition(&databaseRole.Status.Conditions, readyCondition)
+	changed = changed || meta.SetStatusCondition(&databaseRole.Status.Conditions, availableCondition)
+	changed = changed || meta.SetStatusCondition(&databaseRole.Status.Conditions, degradedCondition)
 
 	if changed {
-		logger.Info("Updating Database status", "NamespacedName", req.Name)
-		if err := r.Status().Update(ctx, &database); err != nil {
+		logger.V(1).Info("Updating DatabaseRole status")
+		if err := r.Status().Update(ctx, &databaseRole); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	logger.Info("Reconciled successful", "NamespacedName", req.Name)
+	logger.V(1).Info("Reconcile completed")
 	return ctrl.Result{}, nil
 }
 
@@ -141,6 +152,9 @@ func (r *DatabaseRoleReconciler) ensureDatabaseRole(ctx context.Context, req ctr
 
 	// 1. Get Role CRD
 	if err := r.Get(ctx, req.NamespacedName, &databaseRole); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil // Resource deleted
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -148,6 +162,16 @@ func (r *DatabaseRoleReconciler) ensureDatabaseRole(ctx context.Context, req ctr
 	if err := r.Get(ctx, types.NamespacedName{
 		Name: databaseRole.Spec.DatabaseClusterRef.Name,
 	}, &databaseCluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			degradedCondition = metav1.Condition{
+				Type:    conditionDegraded,
+				Status:  metav1.ConditionTrue,
+				Reason:  "DatabaseClusterNotFound",
+				Message: fmt.Sprintf("DatabaseCluster %s not found", databaseRole.Spec.DatabaseClusterRef.Name),
+			}
+			logger.Info("DatabaseCluster not found, will retry", "cluster", databaseRole.Spec.DatabaseClusterRef.Name)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -164,12 +188,7 @@ func (r *DatabaseRoleReconciler) ensureDatabaseRole(ctx context.Context, req ctr
 		return ctrl.Result{}, err
 	}
 
-	var conn PostgreSQLConnection
-	if r.PgConnectionFactory != nil {
-		conn, err = r.PgConnectionFactory(dsn)
-	} else {
-		conn, err = NewPgConnection(dsn)
-	}
+	conn, err := GetConnection(r.PgConnectionFactory, dsn)
 	if err != nil {
 		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
@@ -218,7 +237,7 @@ func (r *DatabaseRoleReconciler) ensureDatabaseRole(ctx context.Context, req ctr
 				Message: fmt.Sprintf("Password key %s not found in secret %s", databaseRole.Spec.Password.Key, databaseRole.Spec.Password.Name),
 			}
 
-			return ctrl.Result{}, err
+			return ctrl.Result{}, fmt.Errorf("password key %s not found in secret %s", databaseRole.Spec.Password.Key, databaseRole.Spec.Password.Name)
 		}
 
 		err = conn.CreateRole(ctx, databaseRole.Spec.RoleName, string(password))
@@ -267,6 +286,9 @@ func (r *DatabaseRoleReconciler) ensurePermissionsConfigured(ctx context.Context
 
 	// 1. Get Role CRD
 	if err := r.Get(ctx, req.NamespacedName, &databaseRole); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil // Resource deleted
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -274,6 +296,16 @@ func (r *DatabaseRoleReconciler) ensurePermissionsConfigured(ctx context.Context
 	if err := r.Get(ctx, types.NamespacedName{
 		Name: databaseRole.Spec.DatabaseClusterRef.Name,
 	}, &databaseCluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			degradedCondition = metav1.Condition{
+				Type:    conditionDegraded,
+				Status:  metav1.ConditionTrue,
+				Reason:  "DatabaseClusterNotFound",
+				Message: fmt.Sprintf("DatabaseCluster %s not found", databaseRole.Spec.DatabaseClusterRef.Name),
+			}
+			logger.Info("DatabaseCluster not found, will retry", "cluster", databaseRole.Spec.DatabaseClusterRef.Name)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -293,12 +325,7 @@ func (r *DatabaseRoleReconciler) ensurePermissionsConfigured(ctx context.Context
 			return ctrl.Result{}, err
 		}
 
-		var conn PostgreSQLConnection
-		if r.PgConnectionFactory != nil {
-			conn, err = r.PgConnectionFactory(dsn)
-		} else {
-			conn, err = NewPgConnection(dsn)
-		}
+		conn, err := GetConnection(r.PgConnectionFactory, dsn)
 		if err != nil {
 			degradedCondition = metav1.Condition{
 				Type:    conditionDegraded,

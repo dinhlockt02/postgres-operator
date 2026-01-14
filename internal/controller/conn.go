@@ -27,6 +27,14 @@ type PostgreSQLConnection interface {
 
 type PgConnectionFactory func(dsn string) (PostgreSQLConnection, error)
 
+// GetConnection creates a PostgreSQL connection using the factory or default implementation
+func GetConnection(factory PgConnectionFactory, dsn string) (PostgreSQLConnection, error) {
+	if factory != nil {
+		return factory(dsn)
+	}
+	return NewPgConnection(dsn)
+}
+
 type PgConnection struct {
 	connConfig *pgx.ConnConfig
 	conn       *pgx.Conn

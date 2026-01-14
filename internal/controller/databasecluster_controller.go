@@ -67,7 +67,10 @@ type DatabaseClusterReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *DatabaseClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := logf.FromContext(ctx)
+	logger := logf.FromContext(ctx).WithValues("controller", "databasecluster", "resource", req.NamespacedName)
+	ctx = logf.IntoContext(ctx, logger)
+
+	logger.V(1).Info("Reconcile started")
 
 	stages := []func(ctx context.Context, req ctrl.Request) (ctrl.Result, error){
 		r.ensureDatabaseClusterInitialized,
@@ -75,13 +78,16 @@ func (r *DatabaseClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	for _, stage := range stages {
-		if result, err := stage(ctx, req); err != nil {
-			logger.Error(err, "Failed to reconcile DatabaseCluster", "NamespacedName", req.NamespacedName)
+		result, err := stage(ctx, req)
+		if err != nil || !result.IsZero() {
+			if err != nil {
+				logger.Error(err, "Reconcile failed")
+			}
 			return result, err
 		}
 	}
 
-	logger.Info("Reconciled successful, requeue after 30s", "NamespacedName", req.Name)
+	logger.V(1).Info("Reconcile completed, requeue after 30s")
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
@@ -142,12 +148,7 @@ func (r *DatabaseClusterReconciler) ensureDatabaseClusterConnected(ctx context.C
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	var conn PostgreSQLConnection
-	if r.PgConnectionFactory != nil {
-		conn, err = r.PgConnectionFactory(dsn)
-	} else {
-		conn, err = NewPgConnection(dsn)
-	}
+	conn, err := GetConnection(r.PgConnectionFactory, dsn)
 	if err != nil {
 		meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
 			Type:    conditionAvailable,
@@ -168,6 +169,7 @@ func (r *DatabaseClusterReconciler) ensureDatabaseClusterConnected(ctx context.C
 	defer func() { _ = conn.Close(ctx) }()
 
 	// 3. Update the DatabaseCluster status
+	cluster.Status.FailureCount = 0 // Reset on success
 	changed := meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
 		Type:    conditionAvailable,
 		Status:  metav1.ConditionTrue,
@@ -175,7 +177,7 @@ func (r *DatabaseClusterReconciler) ensureDatabaseClusterConnected(ctx context.C
 		Message: "Connected to DatabaseCluster",
 	})
 
-	if changed {
+	if changed || cluster.Status.FailureCount == 0 {
 		if err := r.Status().Update(ctx, &cluster); err != nil {
 			return ctrl.Result{}, err
 		}

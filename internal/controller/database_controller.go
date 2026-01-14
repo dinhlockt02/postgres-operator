@@ -67,9 +67,10 @@ type DatabaseReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	logger := logf.FromContext(ctx).WithValues("controller", "database", "resource", req.NamespacedName)
+	ctx = logf.IntoContext(ctx, logger)
 
-	logger := logf.FromContext(ctx)
+	logger.V(1).Info("Reconcile started")
 
 	stages := []func(ctx context.Context, req ctrl.Request) (ctrl.Result, error){
 		r.ensureDatabaseExists,
@@ -78,7 +79,11 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	for _, stage := range stages {
-		if result, err := stage(ctx, req); err != nil {
+		result, err := stage(ctx, req)
+		if err != nil || !result.IsZero() {
+			if err != nil {
+				logger.Error(err, "Reconcile failed")
+			}
 			return result, err
 		}
 	}
@@ -106,6 +111,9 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	var database postgresv1alpha1.Database
 	if err := r.Get(ctx, req.NamespacedName, &database); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -116,13 +124,13 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	changed = changed || meta.SetStatusCondition(&database.Status.Conditions, degradedCondition)
 
 	if changed {
-		logger.Info("Updating Database status", "NamespacedName", req.Name)
+		logger.V(1).Info("Updating Database status")
 		if err := r.Status().Update(ctx, &database); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	logger.Info("Reconciled successful", "NamespacedName", req.Name)
+	logger.V(1).Info("Reconcile completed")
 	return ctrl.Result{}, nil
 }
 
@@ -162,7 +170,14 @@ func (r *DatabaseReconciler) ensureDatabaseExists(ctx context.Context, req ctrl.
 		Name: database.Spec.DatabaseClusterRef.Name,
 	}, &databaseCluster); err != nil {
 		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
+			degradedCondition = metav1.Condition{
+				Type:    conditionDegraded,
+				Status:  metav1.ConditionTrue,
+				Reason:  "DatabaseClusterNotFound",
+				Message: fmt.Sprintf("DatabaseCluster %s not found", database.Spec.DatabaseClusterRef.Name),
+			}
+			logger.Info("DatabaseCluster not found, will retry", "cluster", database.Spec.DatabaseClusterRef.Name)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		return ctrl.Result{}, err
 	}
@@ -179,12 +194,7 @@ func (r *DatabaseReconciler) ensureDatabaseExists(ctx context.Context, req ctrl.
 		return ctrl.Result{}, err
 	}
 
-	var conn PostgreSQLConnection
-	if r.PgConnectionFactory != nil {
-		conn, err = r.PgConnectionFactory(dsn)
-	} else {
-		conn, err = NewPgConnection(dsn)
-	}
+	conn, err := GetConnection(r.PgConnectionFactory, dsn)
 	if err != nil {
 		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
@@ -251,24 +261,7 @@ func (r *DatabaseReconciler) ensureDatabaseServiceExists(ctx context.Context, re
 		database        postgresv1alpha1.Database
 		databaseService corev1.Service
 		databaseCluster postgresv1alpha1.DatabaseCluster
-
-		availableCondition = metav1.Condition{
-			Type:    conditionAvailable,
-			Status:  metav1.ConditionUnknown,
-			Reason:  "Unknown",
-			Message: "Unknown",
-		}
 	)
-
-	defer func() {
-		changed := meta.SetStatusCondition(&databaseService.Status.Conditions, availableCondition)
-		if availableCondition.Status != metav1.ConditionUnknown && changed {
-			updateStatusErr := r.Status().Update(ctx, &databaseService)
-			if updateStatusErr != nil {
-				logger.Error(updateStatusErr, "Failed to update DatabaseService status")
-			}
-		}
-	}()
 
 	// 1. Get CRDs: Database and DatabaseCluster
 	if err := r.Get(ctx, req.NamespacedName, &database); err != nil {
@@ -283,7 +276,8 @@ func (r *DatabaseReconciler) ensureDatabaseServiceExists(ctx context.Context, re
 		Name: database.Spec.DatabaseClusterRef.Name,
 	}, &databaseCluster); err != nil {
 		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
+			logger.Info("DatabaseCluster not found, will retry", "cluster", database.Spec.DatabaseClusterRef.Name)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 
 		return ctrl.Result{}, err
@@ -314,13 +308,6 @@ func (r *DatabaseReconciler) ensureDatabaseServiceExists(ctx context.Context, re
 		if err != nil {
 			reason := "CreateServiceFailed"
 			message := fmt.Sprintf("Failed to create service %v: %v", serviceName, err)
-
-			availableCondition = metav1.Condition{
-				Type:    conditionAvailable,
-				Status:  metav1.ConditionFalse,
-				Reason:  reason,
-				Message: message,
-			}
 
 			r.Recorder.Event(&database, corev1.EventTypeWarning, reason, message)
 			return ctrl.Result{}, err
@@ -444,12 +431,25 @@ func (r *DatabaseReconciler) ensureDatabaseSchemaExists(ctx context.Context, req
 
 	// 1. Get CRDs: Database and DatabaseCluster
 	if err := r.Get(ctx, req.NamespacedName, &database); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
 	if err := r.Get(ctx, types.NamespacedName{
 		Name: database.Spec.DatabaseClusterRef.Name,
 	}, &databaseCluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			degradedCondition = metav1.Condition{
+				Type:    conditionDegraded,
+				Status:  metav1.ConditionTrue,
+				Reason:  "DatabaseClusterNotFound",
+				Message: fmt.Sprintf("DatabaseCluster %s not found", database.Spec.DatabaseClusterRef.Name),
+			}
+			logger.Info("DatabaseCluster not found, will retry", "cluster", database.Spec.DatabaseClusterRef.Name)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -465,12 +465,7 @@ func (r *DatabaseReconciler) ensureDatabaseSchemaExists(ctx context.Context, req
 		return ctrl.Result{}, err
 	}
 
-	var conn PostgreSQLConnection
-	if r.PgConnectionFactory != nil {
-		conn, err = r.PgConnectionFactory(dsn)
-	} else {
-		conn, err = NewPgConnection(dsn)
-	}
+	conn, err := GetConnection(r.PgConnectionFactory, dsn)
 	if err != nil {
 		degradedCondition = metav1.Condition{
 			Type:    conditionDegraded,
